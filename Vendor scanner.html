@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Puja Food Counter Scanner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Fast, lightweight QR camera library -->
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen p-4 flex flex-col items-center">
+
+  <header class="w-full max-w-md text-center py-3 border-b border-slate-800 mb-4">
+    <h1 class="text-xl font-bold tracking-wider text-amber-400">FOOD COUNTER SCANNER</h1>
+    <p class="text-xs text-slate-400">Durga Puja Food Distribution</p>
+  </header>
+
+  <!-- PIN Screen -->
+  <div id="pinScreen" class="w-full max-w-md bg-slate-800 p-5 rounded-2xl border border-slate-700 space-y-3">
+    <label class="block text-xs uppercase font-bold text-slate-400">Enter Counter PIN</label>
+    <input type="password" id="inputPin" value="1234" class="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 text-center text-xl font-mono tracking-widest outline-none focus:border-amber-400" />
+    <button onclick="unlockScanner()" class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-3 rounded-xl transition">
+      Start Camera Scanner
+    </button>
+  </div>
+
+  <!-- Live Camera Viewport -->
+  <div id="scannerSection" class="hidden w-full max-w-md space-y-4">
+    <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 shadow-xl space-y-3">
+      <div id="reader" class="rounded-xl overflow-hidden border-2 border-dashed border-amber-500 bg-black min-h-[260px]"></div>
+      <button id="nextBtn" onclick="resumeScanner()" class="hidden w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-3 rounded-xl uppercase tracking-wider text-sm transition">
+        Scan Next Coupon 🔄
+      </button>
+    </div>
+
+    <!-- Live Scan Result Card -->
+    <div id="resultModal" class="hidden p-5 rounded-2xl text-center shadow-2xl transition-all">
+      <div id="badgeIcon" class="text-4xl mb-1"></div>
+      <h2 id="resultTitle" class="text-xl font-black mb-1"></h2>
+      <p id="resultSub" class="text-xs mb-3 font-semibold"></p>
+
+      <div class="bg-black/40 rounded-xl p-3 text-left text-sm space-y-1.5 border border-white/10 font-mono">
+        <div class="flex justify-between">
+          <span class="text-slate-400">Flat:</span>
+          <span id="detailFlat" class="font-bold text-white text-base"></span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Meal:</span>
+          <span id="detailMeal" class="font-bold text-amber-300"></span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Day:</span>
+          <span id="detailDay" class="text-white"></span>
+        </div>
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-400">Order ID:</span>
+          <span id="detailId" class="text-slate-400"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ⚠️ REPLACE THIS WITH YOUR APPS SCRIPT EXEC URL
+    const SCRIPT_URL = "https://docs.google.com/spreadsheets/d/1RScS292tXUWNTWL-UL_MKBBAlfM_DWz45OR7PEenNjo/edit?gid=0#gid=0";
+
+    let html5QrCode = null;
+    let isProcessing = false;
+    let savedPin = "";
+
+    function unlockScanner() {
+      savedPin = document.getElementById('inputPin').value.trim();
+      if (!savedPin) return alert("Please enter the PIN.");
+
+      document.getElementById('pinScreen').classList.add('hidden');
+      document.getElementById('scannerSection').classList.remove('hidden');
+
+      startLiveCamera();
+    }
+
+    function startLiveCamera() {
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("reader");
+      }
+
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 15, qrbox: { width: 240, height: 240 } },
+        onScanSuccess
+      ).catch(err => {
+        alert("Camera error: " + err);
+      });
+    }
+
+    async function onScanSuccess(decodedText) {
+      if (isProcessing) return;
+      isProcessing = true;
+
+      // Stop camera feed while validating coupon
+      try {
+        await html5QrCode.stop();
+      } catch (e) {}
+
+      document.getElementById('nextBtn').classList.remove('hidden');
+
+      const modal = document.getElementById('resultModal');
+      modal.className = "p-5 rounded-2xl text-center bg-slate-800 border border-amber-500 block";
+      document.getElementById('badgeIcon').innerText = "⏳";
+      document.getElementById('resultTitle').innerText = "Verifying...";
+      document.getElementById('resultSub').innerText = decodedText;
+
+      try {
+        // Use text/plain to avoid CORS preflight options blocks in Google Apps Script
+        const response = await fetch(SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ couponId: decodedText, pin: savedPin })
+        });
+        const res = await response.json();
+        renderResult(res);
+      } catch (err) {
+        showError("Network/CORS error: " + err.message);
+      }
+    }
+
+    function renderResult(res) {
+      const modal = document.getElementById('resultModal');
+      modal.classList.remove('hidden');
+
+      if (res.success) {
+        modal.className = "p-5 rounded-2xl text-center shadow-2xl bg-emerald-700 text-white block";
+        document.getElementById('badgeIcon').innerText = "✅";
+        document.getElementById('resultTitle').innerText = "SERVE MEAL";
+        document.getElementById('resultSub').innerText = "Valid Coupon Verified";
+
+        document.getElementById('detailFlat').innerText = res.details.flatNo;
+        document.getElementById('detailMeal').innerText = res.details.mealType;
+        document.getElementById('detailDay').innerText = res.details.day;
+        document.getElementById('detailId').innerText = res.details.orderId;
+
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+      } else if (res.alreadyRedeemed) {
+        modal.className = "p-5 rounded-2xl text-center shadow-2xl bg-red-700 text-white block";
+        document.getElementById('badgeIcon').innerText = "⚠️";
+        document.getElementById('resultTitle').innerText = "ALREADY SERVED!";
+        document.getElementById('resultSub').innerText = res.message;
+
+        document.getElementById('detailFlat').innerText = res.details.flatNo;
+        document.getElementById('detailMeal').innerText = res.details.mealType;
+        document.getElementById('detailDay').innerText = res.details.day;
+        document.getElementById('detailId').innerText = res.details.orderId;
+
+        if (navigator.vibrate) navigator.vibrate(500);
+      } else {
+        showError(res.message);
+      }
+    }
+
+    function showError(msg) {
+      const modal = document.getElementById('resultModal');
+      modal.className = "p-5 rounded-2xl text-center shadow-2xl bg-rose-900 text-white block";
+      document.getElementById('badgeIcon').innerText = "❌";
+      document.getElementById('resultTitle').innerText = "INVALID COUPON";
+      document.getElementById('resultSub').innerText = msg;
+    }
+
+    function resumeScanner() {
+      isProcessing = false;
+      document.getElementById('resultModal').classList.add('hidden');
+      document.getElementById('nextBtn').classList.add('hidden');
+      startLiveCamera();
+    }
+  </script>
+</body>
+</html>
